@@ -1,4 +1,6 @@
-
+# -*- coding: utf-8 -*-
+"""app
+"""
 
 import streamlit as st
 import pandas as pd
@@ -9,7 +11,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 # ----------------------------------------------------------------------------
 # 1. DEFINE THE CUSTOM TRANSFORMER CLASS
 # ----------------------------------------------------------------------------
-
+# Streamlit needs the *exact* class definition
+# to be in the same file as where you load the model.
 
 class Per90Transformer(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -31,14 +34,21 @@ class Per90Transformer(BaseEstimator, TransformerMixin):
         # We use a loop to handle potential division by zero
         for col in ['xG', 'Sh', 'SoT', 'Ast']:
             new_col_name = f"{col}_per_90"
-            X_copy[new_col_name] = X_copy[col] / X_copy['90s']
+            # Use np.where to safely divide
+            X_copy[new_col_name] = np.where(
+                X_copy['90s'] > 0, 
+                X_copy[col] / X_copy['90s'], 
+                0
+            )
 
-        # Replace any inf/-inf values (from 0/0 or x/0) with 0
+        # Replace any inf/-inf values (just in case, though np.where should handle it)
         X_copy.replace([np.inf, -np.inf], 0, inplace=True)
 
         # Select and return only the features our model was trained on
         final_features = ['Age', 'MP', 'xG_per_90', 'Sh_per_90', 'SoT_per_90', 'Ast_per_90']
-        return X_copy[final_features]
+        
+        # Ensure the output is in the correct order and type
+        return X_copy[final_features].astype(float)
 
 # ----------------------------------------------------------------------------
 # 2. LOAD THE TRAINED MODEL
@@ -51,6 +61,7 @@ except FileNotFoundError:
     st.stop()
 except Exception as e:
     st.error(f"An error occurred loading the model: {e}")
+    st.image("https://i.imgur.com/x06nXYM.png", caption="This error is likely caused by a version mismatch. See instructions.")
     st.stop()
 
 # ----------------------------------------------------------------------------
@@ -65,21 +76,18 @@ st.sidebar.markdown("Enter the player's seasonal data below.")
 
 # --- Create the input form in the sidebar ---
 with st.sidebar:
-    # Use columns for a cleaner layout
-    col1, col2 = st.columns(2)
+    age = st.number_input('Age', min_value=15, max_value=45, value=25, help="Player's age at the start of the season.")
+    mp = st.number_input('Matches Played (MP)', min_value=1, max_value=60, value=20, help="Total matches played.")
+    min_played = st.number_input('Total Minutes Played (Min)', min_value=90, max_value=6000, value=1800, help="Total minutes played all season. Must be at least 90.")
+    
+    st.divider() # Visual separator
+    
+    xg = st.number_input('Expected Goals (xG)', min_value=0.0, value=5.0, format="%.2f", help="Total Expected Goals for the season.")
+    sh = st.number_input('Total Shots (Sh)', min_value=0, value=30, help="Total shots taken.")
+    sot = st.number_input('Shots on Target (SoT)', min_value=0, value=15, help="Total shots on target.")
+    ast = st.number_input('Total Assists (Ast)', min_value=0, value=5, help="Total assists for the season.")
 
-    with col1:
-        pos = st.selectbox('Position (Pos)', ['FW', 'MF', 'DF'], help="Player's primary position.")
-        age = st.number_input('Age', min_value=15, max_value=45, value=25, help="Player's age at the start of the season.")
-        mp = st.number_input('Matches Played (MP)', min_value=1, max_value=60, value=20, help="Total matches played.")
-        min_played = st.number_input('Total Minutes Played (Min)', min_value=90, max_value=6000, value=1800, help="Total minutes played all season. Must be at least 90.")
-
-    with col2:
-        league = st.selectbox('League', ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'])
-        xg = st.number_input('Expected Goals (xG)', min_value=0.0, value=5.0, format="%.2f", help="Total Expected Goals for the season.")
-        sh = st.number_input('Total Shots (Sh)', min_value=0, value=30, help="Total shots taken.")
-        sot = st.number_input('Shots on Target (SoT)', min_value=0, value=15, help="Total shots on target.")
-        ast = st.number_input('Total Assists (Ast)', min_value=0, value=5, help="Total assists for the season.")
+    st.divider()
 
     # The prediction button
     predict_button = st.button('Predict Goals', type="primary", use_container_width=True)
@@ -89,7 +97,8 @@ with st.sidebar:
 # ----------------------------------------------------------------------------
 if predict_button:
     # This list MUST match the columns your pipeline expects to receive
-    feature_names = ['Age', 'MP', 'Min', 'xG', 'Sh', 'SoT', 'Ast', 'Pos', 'League']
+    # These are the *raw* features before the transformer runs
+    feature_names = ['Age', 'MP', 'Min', 'xG', 'Sh', 'SoT', 'Ast']
 
     # Create a dictionary with the user's input
     user_data = {
@@ -99,17 +108,15 @@ if predict_button:
         'xG': xg,
         'Sh': sh,
         'SoT': sot,
-        'Ast': ast,
-        'Pos': pos,
-        'League': league
+        'Ast': ast
     }
 
     # Create a single-row DataFrame
-    # This is the *exact* format your pipeline was trained to receive
+    # This is the *exact* format your pipeline's transformer expects
     try:
         input_df = pd.DataFrame([user_data], columns=feature_names)
 
-        st.subheader("Input Data (What the Model Sees):")
+        st.subheader("Raw Input Data (Before Transformation):")
         st.dataframe(input_df)
 
         # Call the pipeline's predict function
@@ -127,3 +134,4 @@ if predict_button:
 
     except Exception as e:
         st.error(f"An error occurred during prediction: {e}")
+        st.exception(e)
